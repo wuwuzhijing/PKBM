@@ -1,0 +1,2 @@
+# 此文件用于保持resources目录在git中的存在
+# 实际的资源文件将被.gitignore忽略

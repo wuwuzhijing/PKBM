@@ -1,0 +1,9 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=PKBM
+Comment=个人知识库管理系统
+Exec=pkbm
+Icon=pkbm
+Terminal=false
+Categories=Office;TextEditor;

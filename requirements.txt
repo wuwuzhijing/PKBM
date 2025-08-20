@@ -1,0 +1,23 @@
+# GUI框架
+PyQt6>=6.5.0
+PyQt6-Qt6>=6.5.0
+PyQt6-sip>=13.5.0
+
+# 文档处理
+PyPDF2>=3.0.0
+python-docx>=0.8.11
+openpyxl>=3.1.0
+
+# 图像处理
+Pillow>=9.5.0
+
+# XML和HTML处理
+lxml>=4.9.0
+beautifulsoup4>=4.12.0
+
+# 网络请求
+requests>=2.28.0
+
+# 其他工具
+python-dateutil>=2.8.0
+
