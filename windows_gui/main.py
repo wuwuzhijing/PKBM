@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-PKBM - Windows GUI版本
+PKBM - Windows GUI版本 (改进版)
 使用tkinter创建跨平台兼容的界面
+解决分类管理、界面美观和后端启动问题
 """
 
 import tkinter as tk
@@ -16,10 +17,10 @@ import threading
 import subprocess
 import sys
 
-class PKBMWindowsGUI:
+class PKBMImprovedGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("PKBM - 个人知识库管理系统")
+        self.root.title("PKBM - 个人知识库管理系统 (改进版)")
         self.root.geometry("1400x900")
         
         # 配置
@@ -288,81 +289,148 @@ class PKBMWindowsGUI:
                   style='Primary.TButton').pack(side=tk.LEFT, padx=(0, 5), pady=10)
         ttk.Button(toolbar, text="🔄 刷新", command=self.refresh_data).pack(side=tk.LEFT, padx=(0, 5), pady=10)
         ttk.Button(toolbar, text="📊 统计", command=self.show_stats).pack(side=tk.LEFT, padx=(0, 10), pady=10)
-    
+
     def load_data(self):
         """加载数据"""
-        try:
-            # 加载分类
-            self.load_categories()
-            
-            # 加载条目
-            self.load_items()
-            
-            self.status_var.set("✅ 数据加载完成")
-            
-        except Exception as e:
-            messagebox.showerror("错误", f"加载数据失败: {e}")
+        self.load_categories()
+        self.load_items()
     
     def load_categories(self):
-        """加载分类"""
+        """加载分类数据"""
         try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute('SELECT name, description, color FROM categories ORDER BY name')
+            categories = cursor.fetchall()
+            conn.close()
+            
             # 清空现有项目
             for item in self.category_tree.get_children():
                 self.category_tree.delete(item)
             
-            # 添加"全部"选项
-            self.category_tree.insert('', 'end', text="全部", values=("全部",))
-            
-            # 从数据库加载分类
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            cursor.execute('SELECT name FROM categories ORDER BY name')
-            categories = cursor.fetchall()
-            conn.close()
-            
             # 添加分类
-            for category in categories:
-                self.category_tree.insert('', 'end', text=category[0], values=(category[0],))
+            for name, desc, color in categories:
+                self.category_tree.insert('', 'end', text=name, values=(name, desc, color))
                 
         except Exception as e:
             print(f"加载分类失败: {e}")
+            messagebox.showerror("错误", f"加载分类失败: {e}")
     
     def load_items(self, category=None):
-        """加载条目"""
+        """加载知识条目"""
         try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            if category and category != "全部":
+                cursor.execute('''
+                    SELECT title, category, tags, updated_date 
+                    FROM knowledge_items 
+                    WHERE category = ? 
+                    ORDER BY updated_date DESC
+                ''', (category,))
+            else:
+                cursor.execute('''
+                    SELECT title, category, tags, updated_date 
+                    FROM knowledge_items 
+                    ORDER BY updated_date DESC
+                ''')
+            
+            items = cursor.fetchall()
+            conn.close()
+            
             # 清空现有项目
             for item in self.item_tree.get_children():
                 self.item_tree.delete(item)
             
-            # 构建查询
-            query = 'SELECT id, title, category, tags, created_date, updated_date FROM knowledge_items'
-            params = []
-            
-            if category and category != "全部":
-                query += ' WHERE category = ?'
-                params.append(category)
-            
-            query += ' ORDER BY updated_date DESC'
-            
-            # 从数据库查询
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            cursor.execute(query, params)
-            items = cursor.fetchall()
-            conn.close()
-            
-            # 添加到树形视图
-            for item in items:
-                # 格式化日期
-                created_date = item[4][:19] if item[4] else ""
-                updated_date = item[5][:19] if item[5] else ""
+            # 添加条目
+            for title, cat, tags, updated in items:
+                # 格式化更新时间
+                if updated:
+                    try:
+                        dt = datetime.fromisoformat(updated)
+                        formatted_date = dt.strftime("%Y-%m-%d %H:%M")
+                    except:
+                        formatted_date = updated
+                else:
+                    formatted_date = "未知"
                 
-                self.item_tree.insert('', 'end', values=(
-                    item[1], item[2], item[3], updated_date
-                ))
+                self.item_tree.insert('', 'end', values=(title, cat or "未分类", tags or "", formatted_date))
                 
         except Exception as e:
             print(f"加载条目失败: {e}")
+            messagebox.showerror("错误", f"加载条目失败: {e}")
+
+    def load_data(self):
+        """加载数据"""
+        self.load_categories()
+        self.load_items()
+    
+    def load_categories(self):
+        """加载分类数据"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute('SELECT name, description, color FROM categories ORDER BY name')
+            categories = cursor.fetchall()
+            conn.close()
+            
+            # 清空现有项目
+            for item in self.category_tree.get_children():
+                self.category_tree.delete(item)
+            
+            # 添加分类
+            for name, desc, color in categories:
+                self.category_tree.insert('', 'end', text=name, values=(name, desc, color))
+                
+        except Exception as e:
+            print(f"加载分类失败: {e}")
+            messagebox.showerror("错误", f"加载分类失败: {e}")
+    
+    def load_items(self, category=None):
+        """加载知识条目"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            if category and category != "全部":
+                cursor.execute('''
+                    SELECT title, category, tags, updated_date 
+                    FROM knowledge_items 
+                    WHERE category = ? 
+                    ORDER BY updated_date DESC
+                ''', (category,))
+            else:
+                cursor.execute('''
+                    SELECT title, category, tags, updated_date 
+                    FROM knowledge_items 
+                    ORDER BY updated_date DESC
+                ''')
+            
+            items = cursor.fetchall()
+            conn.close()
+            
+            # 清空现有项目
+            for item in self.item_tree.get_children():
+                self.item_tree.delete(item)
+            
+            # 添加条目
+            for title, cat, tags, updated in items:
+                # 格式化更新时间
+                if updated:
+                    try:
+                        dt = datetime.fromisoformat(updated)
+                        formatted_date = dt.strftime("%Y-%m-%d %H:%M")
+                    except:
+                        formatted_date = updated
+                else:
+                    formatted_date = "未知"
+                
+                self.item_tree.insert('', 'end', values=(title, cat or "未分类", tags or "", formatted_date))
+                
+        except Exception as e:
+            print(f"加载条目失败: {e}")
+            messagebox.showerror("错误", f"加载条目失败: {e}")
     
     def search_items(self, event=None):
         """搜索条目"""
@@ -372,16 +440,10 @@ class PKBMWindowsGUI:
             return
         
         try:
-            # 清空现有项目
-            for item in self.item_tree.get_children():
-                self.item_tree.delete(item)
-            
-            # 搜索数据库
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             cursor.execute('''
-                SELECT id, title, content, category, tags, created_date, updated_date
-                FROM knowledge_items 
+                SELECT title, category, tags, updated_date FROM knowledge_items 
                 WHERE title LIKE ? OR content LIKE ? OR tags LIKE ?
                 ORDER BY updated_date DESC
             ''', (f'%{search_term}%', f'%{search_term}%', f'%{search_term}%'))
@@ -389,41 +451,45 @@ class PKBMWindowsGUI:
             items = cursor.fetchall()
             conn.close()
             
-            # 显示搜索结果
-            for item in items:
-                created_date = item[5][:19] if item[5] else ""
-                updated_date = item[6][:19] if item[6] else ""
+            # 清空现有项目
+            for item in self.item_tree.get_children():
+                self.item_tree.delete(item)
+            
+            # 添加搜索结果
+            for title, cat, tags, updated in items:
+                if updated:
+                    try:
+                        dt = datetime.fromisoformat(updated)
+                        formatted_date = dt.strftime("%Y-%m-%d %H:%M")
+                    except:
+                        formatted_date = updated
+                else:
+                    formatted_date = "未知"
                 
-                self.item_tree.insert('', 'end', values=(
-                    item[1], item[2], item[3], updated_date
-                ))
+                self.item_tree.insert('', 'end', values=(title, cat or "未分类", tags or "", formatted_date))
                 
         except Exception as e:
             print(f"搜索失败: {e}")
+            messagebox.showerror("错误", f"搜索失败: {e}")
     
     def on_category_select(self, event):
         """分类选择事件"""
         selection = self.category_tree.selection()
         if selection:
-            category = self.category_tree.item(selection[0])['values'][0]
+            category = self.category_tree.item(selection[0])['text']
             self.load_items(category)
+            self.status_var.set(f"📁 当前分类: {category}")
     
     def on_category_double_click(self, event):
         """分类双击事件"""
-        selection = self.category_tree.selection()
-        if selection:
-            category_name = self.category_tree.item(selection[0])['values'][0]
-            if category_name == "全部":
-                self.load_items()
-            else:
-                self.load_items(category_name)
+        self.edit_category()
     
     def on_item_double_click(self, event):
         """条目双击事件"""
         selection = self.item_tree.selection()
         if selection:
-            item_id = self.item_tree.item(selection[0])['values'][0]
-            self.view_item(item_id)
+            title = self.item_tree.item(selection[0])['values'][0]
+            self.edit_item_by_title(title)
     
     def new_item(self):
         """新建条目"""
@@ -433,34 +499,17 @@ class PKBMWindowsGUI:
         """编辑条目"""
         selection = self.item_tree.selection()
         if selection:
-            item_id = self.item_tree.item(selection[0])['values'][0]
-            self.edit_item_by_id(item_id)
+            title = self.item_tree.item(selection[0])['values'][0]
+            self.edit_item_by_title(title)
         else:
             messagebox.showwarning("警告", "请先选择一个条目")
     
-    def view_item(self, item_id):
-        """查看条目"""
+    def edit_item_by_title(self, title):
+        """根据标题编辑条目"""
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
-            cursor.execute('SELECT * FROM knowledge_items WHERE id = ?', (item_id,))
-            item = cursor.fetchone()
-            conn.close()
-            
-            if item:
-                self.show_item_view(item)
-            else:
-                messagebox.showerror("错误", "条目不存在")
-                
-        except Exception as e:
-            messagebox.showerror("错误", f"查看条目失败: {e}")
-    
-    def edit_item_by_id(self, item_id):
-        """根据ID编辑条目"""
-        try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            cursor.execute('SELECT * FROM knowledge_items WHERE id = ?', (item_id,))
+            cursor.execute('SELECT * FROM knowledge_items WHERE title = ?', (title,))
             item = cursor.fetchone()
             conn.close()
             
@@ -470,140 +519,223 @@ class PKBMWindowsGUI:
                 messagebox.showerror("错误", "条目不存在")
                 
         except Exception as e:
-            messagebox.showerror("错误", f"编辑条目失败: {e}")
+            messagebox.showerror("错误", f"获取条目信息失败: {e}")
     
     def delete_item(self):
         """删除条目"""
         selection = self.item_tree.selection()
-        if selection:
-            item_id = self.item_tree.item(selection[0])['values'][0]
-            title = self.item_tree.item(selection[0])['values'][1]
-            
-            if messagebox.askyesno("确认", f"确定要删除条目 '{title}' 吗？"):
-                try:
-                    conn = sqlite3.connect(self.db_path)
-                    cursor = conn.cursor()
-                    cursor.execute('DELETE FROM knowledge_items WHERE id = ?', (item_id,))
-                    conn.commit()
-                    conn.close()
-                    
-                    self.load_items()
-                    self.status_var.set(f"✅ 已删除条目: {title}")
-                    
-                except Exception as e:
-                    messagebox.showerror("错误", f"删除失败: {e}")
-        else:
+        if not selection:
             messagebox.showwarning("警告", "请先选择一个条目")
-    
-    def import_file(self):
-        """导入文件"""
-        file_path = filedialog.askopenfilename(
-            title="选择要导入的文件",
-            filetypes=[
-                ("文本文件", "*.txt"),
-                ("Markdown文件", "*.md"),
-                ("所有文件", "*.*")
-            ]
-        )
+            return
         
-        if file_path:
+        title = self.item_tree.item(selection[0])['values'][0]
+        if messagebox.askyesno("确认删除", f"确定要删除条目 '{title}' 吗？"):
             try:
-                with open(file_path, 'r', encoding='utf-8') as f:
-                    content = f.read()
-                
-                # 提取文件名作为标题
-                title = Path(file_path).stem
-                
-                # 保存到数据库
                 conn = sqlite3.connect(self.db_path)
                 cursor = conn.cursor()
-                cursor.execute('''
-                    INSERT INTO knowledge_items (title, content, category, created_date, updated_date, file_path)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                ''', (title, content, "其他", datetime.now().isoformat(), datetime.now().isoformat(), file_path))
+                cursor.execute('DELETE FROM knowledge_items WHERE title = ?', (title,))
                 conn.commit()
                 conn.close()
                 
+                messagebox.showinfo("成功", "条目删除成功")
                 self.load_items()
-                self.status_var.set(f"✅ 已导入文件: {title}")
                 
             except Exception as e:
-                messagebox.showerror("错误", f"导入失败: {e}")
+                messagebox.showerror("错误", f"删除失败: {e}")
     
-    def start_backend(self):
-        """启动后端服务"""
-        def start_service():
-            try:
-                # 这里可以启动Go后端服务
-                # 或者检查服务状态
-                response = requests.get(f"{self.api_base}/stats", timeout=5)
-                if response.status_code == 200:
-                    messagebox.showinfo("信息", "后端服务正在运行")
-                else:
-                    messagebox.showwarning("警告", "后端服务响应异常")
-            except requests.exceptions.RequestException:
-                messagebox.showinfo("信息", "后端服务未启动，请手动启动Go后端")
+    def new_category(self):
+        """新建分类"""
+        self.show_category_dialog()
+    
+    def edit_category(self):
+        """编辑分类"""
+        selection = self.category_tree.selection()
+        if not selection:
+            messagebox.showwarning("警告", "请先选择一个分类")
+            return
         
-        threading.Thread(target=start_service, daemon=True).start()
-    
-    def check_connection(self):
-        """检查连接状态"""
+        category_name = self.category_tree.item(selection[0])['text']
         try:
-            response = requests.get(f"{self.api_base}/stats", timeout=5)
-            if response.status_code == 200:
-                stats = response.json()
-                messagebox.showinfo("连接状态", 
-                    f"后端服务连接正常\n"
-                    f"条目总数: {stats.get('total_items', 0)}\n"
-                    f"分类总数: {stats.get('total_categories', 0)}")
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute('SELECT * FROM categories WHERE name = ?', (category_name,))
+            category = cursor.fetchone()
+            conn.close()
+            
+            if category:
+                self.show_category_dialog(category)
             else:
-                messagebox.showwarning("连接状态", "后端服务响应异常")
-        except requests.exceptions.RequestException:
-            messagebox.showerror("连接状态", "无法连接到后端服务")
+                messagebox.showerror("错误", "分类不存在")
+                
+        except Exception as e:
+            messagebox.showerror("错误", f"获取分类信息失败: {e}")
     
-    def show_about(self):
-        """显示关于信息"""
-        messagebox.showinfo("关于", 
-            "PKBM - 个人知识库管理系统\n\n"
-            "版本: 1.0.0 (Windows GUI版本)\n"
-            "使用tkinter构建，支持跨平台\n"
-            "后端: Go语言 + SQLite数据库")
+    def delete_category(self):
+        """删除分类"""
+        selection = self.category_tree.selection()
+        if not selection:
+            messagebox.showwarning("警告", "请先选择一个分类")
+            return
+        
+        category_name = self.category_tree.item(selection[0])['text']
+        
+        # 检查是否有条目使用此分类
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute('SELECT COUNT(*) FROM knowledge_items WHERE category = ?', (category_name,))
+            count = cursor.fetchone()[0]
+            conn.close()
+            
+            if count > 0:
+                messagebox.showwarning("警告", f"分类 '{category_name}' 下还有 {count} 个条目，无法删除")
+                return
+                
+        except Exception as e:
+            messagebox.showerror("错误", f"检查分类使用情况失败: {e}")
+            return
+        
+        if messagebox.askyesno("确认删除", f"确定要删除分类 '{category_name}' 吗？"):
+            try:
+                conn = sqlite3.connect(self.db_path)
+                cursor = conn.cursor()
+                cursor.execute('DELETE FROM categories WHERE name = ?', (category_name,))
+                conn.commit()
+                conn.close()
+                
+                messagebox.showinfo("成功", "分类删除成功")
+                self.load_categories()
+                
+            except Exception as e:
+                messagebox.showerror("错误", f"删除失败: {e}")
+    
+    def show_category_dialog(self, category=None):
+        """显示分类编辑对话框"""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("编辑分类" if category else "新建分类")
+        dialog.geometry("400x300")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        # 创建表单
+        form_frame = ttk.Frame(dialog, padding=20)
+        form_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # 分类名
+        ttk.Label(form_frame, text="分类名:", font=('Arial', 10, 'bold')).grid(row=0, column=0, sticky=tk.W, pady=10)
+        name_var = tk.StringVar(value=category[1] if category else "")
+        name_entry = ttk.Entry(form_frame, textvariable=name_var, width=30, font=('Arial', 10))
+        name_entry.grid(row=0, column=1, sticky=(tk.W, tk.E), pady=10, padx=(10, 0))
+        
+        # 描述
+        ttk.Label(form_frame, text="描述:", font=('Arial', 10, 'bold')).grid(row=1, column=0, sticky=tk.W, pady=10)
+        desc_var = tk.StringVar(value=category[2] if category else "")
+        desc_entry = ttk.Entry(form_frame, textvariable=desc_var, width=30, font=('Arial', 10))
+        desc_entry.grid(row=1, column=1, sticky=(tk.W, tk.E), pady=10, padx=(10, 0))
+        
+        # 颜色选择
+        ttk.Label(form_frame, text="颜色:", font=('Arial', 10, 'bold')).grid(row=2, column=0, sticky=tk.W, pady=10)
+        color_var = tk.StringVar(value=category[3] if category else "#3498db")
+        colors = ["#e74c3c", "#f39c12", "#3498db", "#9b59b6", "#1abc9c", "#e67e22", "#34495e", "#95a5a6"]
+        color_combo = ttk.Combobox(form_frame, textvariable=color_var, values=colors, width=27, font=('Arial', 10))
+        color_combo.grid(row=2, column=1, sticky=(tk.W, tk.E), pady=10, padx=(10, 0))
+        
+        # 按钮
+        button_frame = ttk.Frame(form_frame)
+        button_frame.grid(row=3, column=0, columnspan=2, pady=30)
+        
+        def save_category():
+            name = name_var.get().strip()
+            description = desc_var.get().strip()
+            color = color_var.get()
+            
+            if not name:
+                messagebox.showwarning("警告", "分类名不能为空")
+                return
+            
+            try:
+                conn = sqlite3.connect(self.db_path)
+                cursor = conn.cursor()
+                
+                if category:
+                    # 更新现有分类
+                    cursor.execute('''
+                        UPDATE categories 
+                        SET name = ?, description = ?, color = ? 
+                        WHERE id = ?
+                    ''', (name, description, color, category[0]))
+                else:
+                    # 创建新分类
+                    cursor.execute('''
+                        INSERT INTO categories (name, description, color) 
+                        VALUES (?, ?, ?)
+                    ''', (name, description, color))
+                
+                conn.commit()
+                conn.close()
+                
+                messagebox.showinfo("成功", "分类保存成功")
+                dialog.destroy()
+                self.load_categories()
+                
+            except sqlite3.IntegrityError:
+                messagebox.showerror("错误", f"分类名 '{name}' 已存在")
+            except Exception as e:
+                messagebox.showerror("错误", f"保存失败: {e}")
+        
+        ttk.Button(button_frame, text="保存", command=save_category, 
+                  style='Success.TButton').pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Button(button_frame, text="取消", command=dialog.destroy).pack(side=tk.LEFT)
+        
+        # 设置焦点
+        name_entry.focus()
     
     def show_item_dialog(self, item=None):
         """显示条目编辑对话框"""
         dialog = tk.Toplevel(self.root)
         dialog.title("编辑条目" if item else "新建条目")
-        dialog.geometry("600x500")
+        dialog.geometry("700x600")
         dialog.transient(self.root)
         dialog.grab_set()
         
         # 创建表单
-        form_frame = ttk.Frame(dialog, padding=10)
+        form_frame = ttk.Frame(dialog, padding=20)
         form_frame.pack(fill=tk.BOTH, expand=True)
         
         # 标题
-        ttk.Label(form_frame, text="标题:").grid(row=0, column=0, sticky=tk.W, pady=5)
+        ttk.Label(form_frame, text="标题:", font=('Arial', 10, 'bold')).grid(row=0, column=0, sticky=tk.W, pady=10)
         title_var = tk.StringVar(value=item[1] if item else "")
-        title_entry = ttk.Entry(form_frame, textvariable=title_var, width=50)
-        title_entry.grid(row=0, column=1, sticky=(tk.W, tk.E), pady=5)
+        title_entry = ttk.Entry(form_frame, textvariable=title_var, width=50, font=('Arial', 10))
+        title_entry.grid(row=0, column=1, sticky=(tk.W, tk.E), pady=10, padx=(10, 0))
         
         # 分类
-        ttk.Label(form_frame, text="分类:").grid(row=1, column=0, sticky=tk.W, pady=5)
+        ttk.Label(form_frame, text="分类:", font=('Arial', 10, 'bold')).grid(row=1, column=0, sticky=tk.W, pady=10)
         category_var = tk.StringVar(value=item[3] if item else "其他")
+        
+        # 获取所有分类
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute('SELECT name FROM categories ORDER BY name')
+            categories = [row[0] for row in cursor.fetchall()]
+            conn.close()
+        except:
+            categories = ["其他", "格言警句", "方法论", "技术文档", "学习笔记", "工作记录", "生活感悟", "书籍摘要"]
+        
         category_combo = ttk.Combobox(form_frame, textvariable=category_var, 
-                                    values=["其他", "格言警句", "方法论", "技术文档", "学习笔记", "工作记录", "生活感悟", "书籍摘要"])
-        category_combo.grid(row=1, column=1, sticky=(tk.W, tk.E), pady=5)
+                                    values=categories, width=47, font=('Arial', 10))
+        category_combo.grid(row=1, column=1, sticky=(tk.W, tk.E), pady=10, padx=(10, 0))
         
         # 标签
-        ttk.Label(form_frame, text="标签:").grid(row=2, column=0, sticky=tk.W, pady=5)
+        ttk.Label(form_frame, text="标签:", font=('Arial', 10, 'bold')).grid(row=2, column=0, sticky=tk.W, pady=10)
         tags_var = tk.StringVar(value=item[4] if item else "")
-        tags_entry = ttk.Entry(form_frame, textvariable=tags_var, width=50)
-        tags_entry.grid(row=2, column=1, sticky=(tk.W, tk.E), pady=5)
+        tags_entry = ttk.Entry(form_frame, textvariable=tags_var, width=50, font=('Arial', 10))
+        tags_entry.grid(row=2, column=1, sticky=(tk.W, tk.E), pady=10, padx=(10, 0))
         
         # 内容
-        ttk.Label(form_frame, text="内容:").grid(row=3, column=0, sticky=tk.W, pady=5)
-        content_text = scrolledtext.ScrolledText(form_frame, height=15, width=50)
-        content_text.grid(row=3, column=1, sticky=(tk.W, tk.E, tk.N, tk.S), pady=5)
+        ttk.Label(form_frame, text="内容:", font=('Arial', 10, 'bold')).grid(row=3, column=0, sticky=tk.W, pady=10)
+        content_text = scrolledtext.ScrolledText(form_frame, height=20, width=50, font=('Arial', 10))
+        content_text.grid(row=3, column=1, sticky=(tk.W, tk.E, tk.N, tk.S), pady=10, padx=(10, 0))
         
         if item:
             content_text.insert(tk.END, item[2] or "")
@@ -626,281 +758,200 @@ class PKBMWindowsGUI:
                 conn = sqlite3.connect(self.db_path)
                 cursor = conn.cursor()
                 
+                now = datetime.now().isoformat()
+                
                 if item:
                     # 更新现有条目
                     cursor.execute('''
                         UPDATE knowledge_items 
-                        SET title=?, content=?, category=?, tags=?, updated_date=?
-                        WHERE id=?
-                    ''', (title, content, category, tags, datetime.now().isoformat(), item[0]))
+                        SET title = ?, content = ?, category = ?, tags = ?, updated_date = ?
+                        WHERE id = ?
+                    ''', (title, content, category, tags, now, item[0]))
                 else:
                     # 创建新条目
                     cursor.execute('''
                         INSERT INTO knowledge_items (title, content, category, tags, created_date, updated_date)
                         VALUES (?, ?, ?, ?, ?, ?)
-                    ''', (title, content, category, tags, datetime.now().isoformat(), datetime.now().isoformat()))
+                    ''', (title, content, category, tags, now, now))
                 
                 conn.commit()
                 conn.close()
                 
-                self.load_items()
-                self.status_var.set(f"✅ 已{'更新' if item else '创建'}条目: {title}")
+                messagebox.showinfo("成功", "条目保存成功")
                 dialog.destroy()
+                self.load_items()
                 
             except Exception as e:
                 messagebox.showerror("错误", f"保存失败: {e}")
         
-        def cancel():
-            dialog.destroy()
-        
-        ttk.Button(button_frame, text="保存", command=save_item).pack(side=tk.LEFT, padx=(0, 10))
-        ttk.Button(button_frame, text="取消", command=cancel).pack(side=tk.LEFT)
-        
-        # 配置网格权重
-        form_frame.columnconfigure(1, weight=1)
-        form_frame.rowconfigure(3, weight=1)
+        ttk.Button(button_frame, text="保存", command=save_item, 
+                  style='Success.TButton').pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Button(button_frame, text="取消", command=dialog.destroy).pack(side=tk.LEFT)
         
         # 设置焦点
         title_entry.focus()
     
-    def show_item_view(self, item):
-        """显示条目查看对话框"""
-        dialog = tk.Toplevel(self.root)
-        dialog.title(f"查看条目: {item[1]}")
-        dialog.geometry("700x600")
-        dialog.transient(self.root)
+    def import_file(self):
+        """导入文件"""
+        file_path = filedialog.askopenfilename(
+            title="选择要导入的文件",
+            filetypes=[
+                ("文本文件", "*.txt"),
+                ("Markdown文件", "*.md"),
+                ("所有文件", "*.*")
+            ]
+        )
         
-        # 创建内容框架
-        content_frame = ttk.Frame(dialog, padding=20)
-        content_frame.pack(fill=tk.BOTH, expand=True)
+        if not file_path:
+            return
         
-        # 标题
-        title_label = ttk.Label(content_frame, text=item[1], font=("Arial", 16, "bold"))
-        title_label.pack(pady=(0, 20))
-        
-        # 信息栏
-        info_frame = ttk.Frame(content_frame)
-        info_frame.pack(fill=tk.X, pady=(0, 20))
-        
-        ttk.Label(info_frame, text=f"分类: {item[3]}").pack(anchor=tk.W)
-        ttk.Label(info_frame, text=f"标签: {item[4] or '无'}").pack(anchor=tk.W)
-        ttk.Label(info_frame, text=f"创建时间: {item[5][:19] if item[5] else ''}").pack(anchor=tk.W)
-        ttk.Label(info_frame, text=f"更新时间: {item[6][:19] if item[6] else ''}").pack(anchor=tk.W)
-        
-        # 内容
-        content_label = ttk.Label(content_frame, text="内容:", font=("Arial", 12, "bold"))
-        content_label.pack(anchor=tk.W, pady=(20, 5))
-        
-        content_text = scrolledtext.ScrolledText(content_frame, height=20, width=80, wrap=tk.WORD)
-        content_text.pack(fill=tk.BOTH, expand=True)
-        content_text.insert(tk.END, item[2] or "无内容")
-        content_text.config(state=tk.DISABLED)
-        
-        # 按钮
-        button_frame = ttk.Frame(content_frame)
-        button_frame.pack(pady=20)
-        
-        ttk.Button(button_frame, text="编辑", 
-                  command=lambda: [dialog.destroy(), self.edit_item_by_id(item[0])]).pack(side=tk.LEFT, padx=(0, 10))
-        ttk.Button(button_frame, text="关闭", command=dialog.destroy).pack(side=tk.LEFT)
-
-    def new_category(self):
-        """新建分类"""
-        dialog = tk.Toplevel(self.root)
-        dialog.title("新建分类")
-        dialog.geometry("400x300")
-        dialog.transient(self.root)
-        dialog.grab_set()
-
-        form_frame = ttk.Frame(dialog, padding=10)
-        form_frame.pack(fill=tk.BOTH, expand=True)
-
-        ttk.Label(form_frame, text="分类名称:").grid(row=0, column=0, sticky=tk.W, pady=5)
-        name_var = tk.StringVar()
-        name_entry = ttk.Entry(form_frame, textvariable=name_var, width=30)
-        name_entry.grid(row=0, column=1, sticky=(tk.W, tk.E), pady=5)
-
-        ttk.Label(form_frame, text="描述:").grid(row=1, column=0, sticky=tk.W, pady=5)
-        desc_var = tk.StringVar()
-        desc_entry = ttk.Entry(form_frame, textvariable=desc_var, width=30)
-        desc_entry.grid(row=1, column=1, sticky=(tk.W, tk.E), pady=5)
-
-        button_frame = ttk.Frame(form_frame)
-        button_frame.grid(row=2, column=0, columnspan=2, pady=20)
-
-        def save_category():
-            name = name_var.get().strip()
-            desc = desc_var.get().strip()
-
-            if not name:
-                messagebox.showwarning("警告", "分类名称不能为空")
-                return
-
+        try:
+            # 读取文件内容
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            # 提取文件名作为标题
+            title = os.path.splitext(os.path.basename(file_path))[0]
+            
+            # 创建条目
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            now = datetime.now().isoformat()
+            cursor.execute('''
+                INSERT INTO knowledge_items (title, content, category, created_date, updated_date, file_path)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (title, content, "其他", now, now, file_path))
+            
+            conn.commit()
+            conn.close()
+            
+            messagebox.showinfo("成功", f"文件 '{title}' 导入成功")
+            self.load_items()
+            
+        except Exception as e:
+            messagebox.showerror("错误", f"导入失败: {e}")
+    
+    def start_backend(self):
+        """启动后端服务"""
+        def start_service():
             try:
-                conn = sqlite3.connect(self.db_path)
-                cursor = conn.cursor()
-                cursor.execute('INSERT INTO categories (name, description) VALUES (?, ?)', (name, desc))
-                conn.commit()
-                conn.close()
-                self.load_categories()
-                dialog.destroy()
-                self.status_var.set(f"✅ 已创建分类: {name}")
-            except sqlite3.IntegrityError:
-                messagebox.showerror("错误", f"分类 '{name}' 已存在")
-            except Exception as e:
-                messagebox.showerror("错误", f"创建分类失败: {e}")
-
-        def cancel():
-            dialog.destroy()
-
-        ttk.Button(button_frame, text="保存", command=save_category).pack(side=tk.LEFT, padx=(0, 10))
-        ttk.Button(button_frame, text="取消", command=cancel).pack(side=tk.LEFT)
-
-        # 配置网格权重
-        form_frame.columnconfigure(1, weight=1)
-        form_frame.rowconfigure(1, weight=1)
-
-        # 设置焦点
-        name_entry.focus()
-
-    def edit_category(self):
-        """编辑分类"""
-        selection = self.category_tree.selection()
-        if selection:
-            category_name = self.category_tree.item(selection[0])['values'][0]
-            if category_name == "全部":
-                messagebox.showwarning("警告", "请选择一个具体的分类进行编辑")
-                return
-
-            try:
-                conn = sqlite3.connect(self.db_path)
-                cursor = conn.cursor()
-                cursor.execute('SELECT * FROM categories WHERE name = ?', (category_name,))
-                category = cursor.fetchone()
-                conn.close()
-
-                if category:
-                    dialog = tk.Toplevel(self.root)
-                    dialog.title("编辑分类")
-                    dialog.geometry("400x300")
-                    dialog.transient(self.root)
-                    dialog.grab_set()
-
-                    form_frame = ttk.Frame(dialog, padding=10)
-                    form_frame.pack(fill=tk.BOTH, expand=True)
-
-                    ttk.Label(form_frame, text="分类名称:").grid(row=0, column=0, sticky=tk.W, pady=5)
-                    name_var = tk.StringVar(value=category[1])
-                    name_entry = ttk.Entry(form_frame, textvariable=name_var, width=30)
-                    name_entry.grid(row=0, column=1, sticky=(tk.W, tk.E), pady=5)
-
-                    ttk.Label(form_frame, text="描述:").grid(row=1, column=0, sticky=tk.W, pady=5)
-                    desc_var = tk.StringVar(value=category[2])
-                    desc_entry = ttk.Entry(form_frame, textvariable=desc_var, width=30)
-                    desc_entry.grid(row=1, column=1, sticky=(tk.W, tk.E), pady=5)
-
-                    button_frame = ttk.Frame(form_frame)
-                    button_frame.grid(row=2, column=0, columnspan=2, pady=20)
-
-                    def save_category():
-                        name = name_var.get().strip()
-                        desc = desc_var.get().strip()
-
-                        if not name:
-                            messagebox.showwarning("警告", "分类名称不能为空")
-                            return
-
+                # 尝试启动Go后端服务
+                backend_path = Path("../backend")
+                if backend_path.exists():
+                    # 检查是否有Go后端可执行文件
+                    go_files = list(backend_path.glob("*.go"))
+                    if go_files:
                         try:
-                            conn = sqlite3.connect(self.db_path)
-                            cursor = conn.cursor()
-                            cursor.execute('UPDATE categories SET name = ?, description = ? WHERE name = ?', (name, desc, category_name))
-                            conn.commit()
-                            conn.close()
-                            self.load_categories()
-                            dialog.destroy()
-                            self.status_var.set(f"✅ 已更新分类: {name}")
-                        except sqlite3.IntegrityError:
-                            messagebox.showerror("错误", f"分类 '{name}' 已存在")
+                            # 尝试启动Go后端
+                            subprocess.run(["go", "run", "main.go"], 
+                                         cwd=backend_path, 
+                                         check=True, 
+                                         timeout=30)
+                        except subprocess.TimeoutExpired:
+                            messagebox.showinfo("信息", "Go后端启动超时，可能正在运行")
+                        except FileNotFoundError:
+                            messagebox.showwarning("警告", "未找到Go环境，请先安装Go")
                         except Exception as e:
-                            messagebox.showerror("错误", f"更新分类失败: {e}")
-
-                    def cancel():
-                        dialog.destroy()
-
-                    ttk.Button(button_frame, text="保存", command=save_category).pack(side=tk.LEFT, padx=(0, 10))
-                    ttk.Button(button_frame, text="取消", command=cancel).pack(side=tk.LEFT)
-
-                    # 配置网格权重
-                    form_frame.columnconfigure(1, weight=1)
-                    form_frame.rowconfigure(1, weight=1)
-
-                    # 设置焦点
-                    name_entry.focus()
+                            messagebox.showwarning("警告", f"启动Go后端失败: {e}")
+                    else:
+                        messagebox.showinfo("信息", "未找到Go后端代码，请检查backend目录")
                 else:
-                    messagebox.showerror("错误", "分类不存在")
-            except Exception as e:
-                messagebox.showerror("错误", f"编辑分类失败: {e}")
-        else:
-            messagebox.showwarning("警告", "请先选择一个分类")
-
-    def delete_category(self):
-        """删除分类"""
-        selection = self.category_tree.selection()
-        if selection:
-            category_name = self.category_tree.item(selection[0])['values'][0]
-            if category_name == "全部":
-                messagebox.showwarning("警告", "不能删除'全部'分类")
-                return
-
-            if messagebox.askyesno("确认", f"确定要删除分类 '{category_name}' 吗？\n这将删除所有与此分类关联的条目。"):
+                    messagebox.showinfo("信息", "未找到backend目录，请检查项目结构")
+                
+                # 检查服务状态
                 try:
-                    conn = sqlite3.connect(self.db_path)
-                    cursor = conn.cursor()
-                    cursor.execute('DELETE FROM categories WHERE name = ?', (category_name,))
-                    conn.commit()
-                    conn.close()
-                    self.load_categories()
-                    self.status_var.set(f"✅ 已删除分类: {category_name}")
-                except Exception as e:
-                    messagebox.showerror("错误", f"删除分类失败: {e}")
-        else:
-            messagebox.showwarning("警告", "请先选择一个分类")
-
-    def refresh_data(self):
-        """刷新所有数据"""
-        self.load_categories()
-        self.load_items()
-        self.status_var.set("✅ 数据已刷新")
-
-    def show_stats(self):
-        """显示统计信息"""
+                    response = requests.get(f"{self.api_base}/stats", timeout=5)
+                    if response.status_code == 200:
+                        messagebox.showinfo("信息", "后端服务正在运行")
+                    else:
+                        messagebox.showwarning("警告", "后端服务响应异常")
+                except requests.exceptions.RequestException:
+                    messagebox.showinfo("信息", "后端服务未启动或无法连接")
+                    
+            except Exception as e:
+                messagebox.showerror("错误", f"启动后端服务失败: {e}")
+        
+        threading.Thread(target=start_service, daemon=True).start()
+    
+    def check_connection(self):
+        """检查连接状态"""
         try:
             response = requests.get(f"{self.api_base}/stats", timeout=5)
             if response.status_code == 200:
                 stats = response.json()
-                messagebox.showinfo("统计信息", 
-                    f"后端服务统计信息\n"
+                messagebox.showinfo("连接状态", 
+                    f"后端服务连接正常\n"
                     f"条目总数: {stats.get('total_items', 0)}\n"
-                    f"分类总数: {stats.get('total_categories', 0)}\n"
-                    f"内存使用: {stats.get('memory_usage', 'N/A')}\n"
-                    f"CPU使用率: {stats.get('cpu_usage', 'N/A')}%")
+                    f"分类总数: {stats.get('total_categories', 0)}")
             else:
-                messagebox.showwarning("统计信息", "无法获取统计信息")
+                messagebox.showwarning("连接状态", "后端服务响应异常")
         except requests.exceptions.RequestException:
-            messagebox.showerror("统计信息", "无法连接到后端服务获取统计信息")
+            messagebox.showerror("连接状态", "无法连接到后端服务")
+    
+    def refresh_data(self):
+        """刷新数据"""
+        self.load_categories()
+        self.load_items()
+        self.status_var.set("🔄 数据已刷新")
+    
+    def show_stats(self):
+        """显示统计信息"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # 统计条目总数
+            cursor.execute('SELECT COUNT(*) FROM knowledge_items')
+            total_items = cursor.fetchone()[0]
+            
+            # 统计分类总数
+            cursor.execute('SELECT COUNT(*) FROM categories')
+            total_categories = cursor.fetchone()[0]
+            
+            # 统计各分类条目数
+            cursor.execute('''
+                SELECT category, COUNT(*) as count 
+                FROM knowledge_items 
+                GROUP BY category 
+                ORDER BY count DESC
+            ''')
+            category_stats = cursor.fetchall()
+            
+            conn.close()
+            
+            # 构建统计信息
+            stats_text = f"📊 系统统计信息\n\n"
+            stats_text += f"📝 条目总数: {total_items}\n"
+            stats_text += f"📁 分类总数: {total_categories}\n\n"
+            stats_text += "📈 分类统计:\n"
+            
+            for category, count in category_stats:
+                stats_text += f"  {category}: {count} 条\n"
+            
+            messagebox.showinfo("统计信息", stats_text)
+            
+        except Exception as e:
+            messagebox.showerror("错误", f"获取统计信息失败: {e}")
+    
+    def show_about(self):
+        """显示关于信息"""
+        messagebox.showinfo("关于", 
+            "PKBM - 个人知识库管理系统 (改进版)\n\n"
+            "版本: 2.0.0\n"
+            "使用tkinter构建，支持跨平台\n"
+            "功能特性:\n"
+            "• 完整的分类管理\n"
+            "• 美观的界面设计\n"
+            "• 强大的搜索功能\n"
+            "• 文件导入支持\n"
+            "• 统计信息显示\n\n"
+            "后端: Go语言 + SQLite数据库")
 
 def main():
     """主函数"""
     root = tk.Tk()
-    app = PKBMWindowsGUI(root)
-    
-    # 设置窗口图标（如果有的话）
-    try:
-        root.iconbitmap("resources/icon.ico")
-    except:
-        pass
-    
-    # 运行应用
+    app = PKBMImprovedGUI(root)
     root.mainloop()
 
 if __name__ == "__main__":
