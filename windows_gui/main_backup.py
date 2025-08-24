@@ -16,7 +16,6 @@ from datetime import datetime
 import threading
 import subprocess
 import sys
-import time
 
 # 导入配置管理
 from config_manager import get_config, set_config, save_config
@@ -77,37 +76,6 @@ class PKBMImprovedGUI:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             
-            print("🔧 开始初始化数据库...")
-            
-            # 首先强制创建表结构，确保基础功能正常
-            print("📋 创建基础表结构...")
-            
-            # 创建知识条目表
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS knowledge_items (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    title TEXT NOT NULL,
-                    content TEXT,
-                    category TEXT,
-                    tags TEXT,
-                    created_date TEXT,
-                    updated_date TEXT,
-                    file_path TEXT,
-                    file_type TEXT
-                )
-            ''')
-            print("✅ knowledge_items表创建/检查完成")
-            
-            # 创建分类表
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS categories (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    name TEXT UNIQUE NOT NULL,
-                    description TEXT
-                )
-            ''')
-            print("✅ categories表创建/检查完成")
-            
             # 检查数据库版本
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS db_version (
@@ -116,21 +84,41 @@ class PKBMImprovedGUI:
             ''')
             
             # 获取当前版本
-            try:
-                cursor.execute('SELECT version FROM db_version LIMIT 1')
-                result = cursor.fetchone()
-                current_version = result[0] if result else 0
-            except:
-                # 如果db_version表不存在，从版本0开始
-                current_version = 0
+            cursor.execute('SELECT version FROM db_version LIMIT 1')
+            result = cursor.fetchone()
+            current_version = result[0] if result else 0
             
-            print(f"📊 当前数据库版本: {current_version}")
+            print(f"当前数据库版本: {current_version}")
             
-            # 版本1：插入默认分类
+            # 版本1：基础表结构
             if current_version < 1:
-                print("🔄 升级到版本1...")
+                print("升级到版本1...")
                 
-                # 插入默认分类
+                # 创建知识条目表
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS knowledge_items (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        title TEXT NOT NULL,
+                        content TEXT,
+                        category TEXT,
+                        tags TEXT,
+                        created_date TEXT,
+                        updated_date TEXT,
+                        file_path TEXT,
+                        file_type TEXT
+                    )
+                ''')
+                
+                # 创建分类表（基础版本）
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS categories (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        name TEXT UNIQUE NOT NULL,
+                        description TEXT
+                    )
+                ''')
+                
+                # 插入默认分类（基础版本）
                 default_categories = [
                     ('格言警句', '经典格言和警句'),
                     ('方法论', '各种方法和理论'),
@@ -145,22 +133,21 @@ class PKBMImprovedGUI:
                 for name, desc in default_categories:
                     try:
                         cursor.execute('INSERT INTO categories (name, description) VALUES (?, ?)', (name, desc))
-                        print(f"✅ 添加分类: {name}")
                     except sqlite3.IntegrityError:
-                        print(f"ℹ️ 分类已存在: {name}")
+                        pass
                 
                 current_version = 1
             
             # 版本2：添加color列
             if current_version < 2:
-                print("🔄 升级到版本2...")
+                print("升级到版本2...")
                 
                 # 检查categories表是否有color列
                 cursor.execute("PRAGMA table_info(categories)")
                 columns = [column[1] for column in cursor.fetchall()]
                 
                 if 'color' not in columns:
-                    print("🎨 添加color列...")
+                    print("添加color列...")
                     cursor.execute('ALTER TABLE categories ADD COLUMN color TEXT DEFAULT "#3498db"')
                     
                     # 更新现有分类的颜色
@@ -176,13 +163,7 @@ class PKBMImprovedGUI:
                     }
                     
                     for name, color in color_map.items():
-                        try:
-                            cursor.execute('UPDATE categories SET color = ? WHERE name = ?', (color, name))
-                            print(f"✅ 更新分类颜色: {name} -> {color}")
-                        except Exception as e:
-                            print(f"⚠️ 更新分类颜色失败: {name} - {e}")
-                else:
-                    print("ℹ️ color列已存在")
+                        cursor.execute('UPDATE categories SET color = ? WHERE name = ?', (color, name))
                 
                 current_version = 2
             
@@ -193,11 +174,7 @@ class PKBMImprovedGUI:
             conn.commit()
             conn.close()
             
-            print(f"🎉 数据库初始化完成，版本: {current_version}")
-            
-            # 验证表结构
-            print("🔍 开始验证表结构...")
-            self.verify_table_structure()
+            print(f"数据库初始化完成，版本: {current_version}")
             
         except Exception as e:
             print(f"数据库初始化失败: {e}")
@@ -210,78 +187,6 @@ class PKBMImprovedGUI:
                     print("已删除损坏的数据库文件，下次启动将重新创建")
             except Exception as del_e:
                 print(f"删除数据库文件失败: {del_e}")
-    
-    def verify_table_structure(self):
-        """验证数据库表结构"""
-        try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            
-            # 检查knowledge_items表结构
-            cursor.execute("PRAGMA table_info(knowledge_items)")
-            item_columns = {column[1] for column in cursor.fetchall()}
-            required_columns = {'id', 'title', 'content', 'category', 'tags', 'created_date', 'updated_date', 'file_path', 'file_type'}
-            
-            if not required_columns.issubset(item_columns):
-                print("⚠️ knowledge_items表结构不完整，正在修复...")
-                missing_columns = required_columns - item_columns
-                
-                for col in missing_columns:
-                    if col != 'id':  # 跳过主键
-                        try:
-                            if col == 'title':
-                                cursor.execute('ALTER TABLE knowledge_items ADD COLUMN title TEXT NOT NULL DEFAULT ""')
-                            elif col == 'content':
-                                cursor.execute('ALTER TABLE knowledge_items ADD COLUMN content TEXT')
-                            elif col == 'category':
-                                cursor.execute('ALTER TABLE knowledge_items ADD COLUMN category TEXT')
-                            elif col == 'tags':
-                                cursor.execute('ALTER TABLE knowledge_items ADD COLUMN tags TEXT')
-                            elif col == 'created_date':
-                                cursor.execute('ALTER TABLE knowledge_items ADD COLUMN created_date TEXT')
-                            elif col == 'updated_date':
-                                cursor.execute('ALTER TABLE knowledge_items ADD COLUMN updated_date TEXT')
-                            elif col == 'file_path':
-                                cursor.execute('ALTER TABLE knowledge_items ADD COLUMN file_path TEXT')
-                            elif col == 'file_type':
-                                cursor.execute('ALTER TABLE knowledge_items ADD COLUMN file_type TEXT')
-                            print(f"✅ 已添加列: {col}")
-                        except Exception as col_e:
-                            print(f"❌ 添加列 {col} 失败: {col_e}")
-                
-                conn.commit()
-                print("✅ knowledge_items表结构修复完成")
-            
-            # 检查categories表结构
-            cursor.execute("PRAGMA table_info(categories)")
-            cat_columns = {column[1] for column in cursor.fetchall()}
-            required_cat_columns = {'id', 'name', 'description', 'color'}
-            
-            if not required_cat_columns.issubset(cat_columns):
-                print("⚠️ categories表结构不完整，正在修复...")
-                missing_cat_columns = required_cat_columns - cat_columns
-                
-                for col in missing_cat_columns:
-                    if col != 'id':  # 跳过主键
-                        try:
-                            if col == 'name':
-                                cursor.execute('ALTER TABLE categories ADD COLUMN name TEXT UNIQUE NOT NULL DEFAULT ""')
-                            elif col == 'description':
-                                cursor.execute('ALTER TABLE categories ADD COLUMN description TEXT')
-                            elif col == 'color':
-                                cursor.execute('ALTER TABLE categories ADD COLUMN color TEXT DEFAULT "#3498db"')
-                            print(f"✅ 已添加列: {col}")
-                        except Exception as col_e:
-                            print(f"❌ 添加列 {col} 失败: {col_e}")
-                
-                conn.commit()
-                print("✅ categories表结构修复完成")
-            
-            conn.close()
-            print("✅ 数据库表结构验证完成")
-            
-        except Exception as e:
-            print(f"❌ 验证表结构失败: {e}")
     
     def create_widgets(self):
         """创建界面组件"""
@@ -438,92 +343,6 @@ class PKBMImprovedGUI:
         except Exception as e:
             print(f"❌ 保存设置失败: {e}")
     
-    def show_settings(self):
-        """显示程序设置对话框"""
-        dialog = tk.Toplevel(self.root)
-        dialog.title("🔧 程序设置")
-        dialog.geometry("500x400")
-        dialog.transient(self.root)
-        dialog.grab_set()
-        
-        # 创建表单
-        form_frame = ttk.Frame(dialog, padding=20)
-        form_frame.pack(fill=tk.BOTH, expand=True)
-        
-        # 数据库设置
-        db_frame = ttk.LabelFrame(form_frame, text="数据库设置", padding=10)
-        db_frame.pack(fill=tk.X, pady=(0, 15))
-        
-        ttk.Label(db_frame, text="数据库路径:").grid(row=0, column=0, sticky=tk.W, pady=5)
-        db_path_var = tk.StringVar(value=self.db_path)
-        db_entry = ttk.Entry(db_frame, textvariable=db_path_var, width=40)
-        db_entry.grid(row=0, column=1, sticky=(tk.W, tk.E), pady=5, padx=(10, 0))
-        
-        # 网络设置
-        net_frame = ttk.LabelFrame(form_frame, text="网络设置", padding=10)
-        net_frame.pack(fill=tk.X, pady=(0, 15))
-        
-        ttk.Label(net_frame, text="API地址:").grid(row=0, column=0, sticky=tk.W, pady=5)
-        api_var = tk.StringVar(value=self.api_base)
-        api_entry = ttk.Entry(net_frame, textvariable=api_var, width=40)
-        api_entry.grid(row=0, column=1, sticky=(tk.W, tk.E), pady=5, padx=(10, 0))
-        
-        # 界面设置
-        ui_frame = ttk.LabelFrame(form_frame, text="界面设置", padding=10)
-        ui_frame.pack(fill=tk.X, pady=(0, 15))
-        
-        ttk.Label(ui_frame, text="主题:").grid(row=0, column=0, sticky=tk.W, pady=5)
-        theme_var = tk.StringVar(value=get_config('INTERFACE', 'theme', 'clam'))
-        theme_combo = ttk.Combobox(ui_frame, textvariable=theme_var, 
-                                  values=['clam', 'alt', 'default', 'classic'], width=15)
-        theme_combo.grid(row=0, column=1, sticky=tk.W, pady=5, padx=(10, 0))
-        
-        ttk.Label(ui_frame, text="字体大小:").grid(row=1, column=0, sticky=tk.W, pady=5)
-        font_var = tk.StringVar(value=str(get_config('INTERFACE', 'font_size', 10)))
-        font_spin = ttk.Spinbox(ui_frame, textvariable=font_var, from_=8, to=16, width=15)
-        font_spin.grid(row=1, column=1, sticky=tk.W, pady=5, padx=(10, 0))
-        
-        # 按钮
-        button_frame = ttk.Frame(form_frame)
-        button_frame.pack(pady=20)
-        
-        def save_and_close():
-            # 保存设置
-            set_config('DATABASE', 'db_path', db_path_var.get())
-            set_config('NETWORK', 'api_base_url', api_var.get())
-            set_config('INTERFACE', 'theme', theme_var.get())
-            set_config('INTERFACE', 'font_size', font_var.get())
-            save_config()
-            
-            # 更新当前实例
-            self.db_path = db_path_var.get()
-            self.api_base = api_var.get()
-            
-            messagebox.showinfo("成功", "设置已保存")
-            dialog.destroy()
-        
-        ttk.Button(button_frame, text="💾 保存", command=save_and_close, 
-                  style='Success.TButton').pack(side=tk.LEFT, padx=(0, 10))
-        ttk.Button(button_frame, text="❌ 取消", command=dialog.destroy).pack(side=tk.LEFT)
-    
-    def reset_settings(self):
-        """重置配置到默认值"""
-        if messagebox.askyesno("确认重置", "确定要重置所有配置到默认值吗？\n这将删除所有自定义设置。"):
-            try:
-                # 删除配置文件
-                import os
-                config_file = "config.ini"
-                if os.path.exists(config_file):
-                    os.remove(config_file)
-                    print("✅ 配置文件已删除")
-                
-                # 重新加载默认配置
-                self.load_settings()
-                messagebox.showinfo("成功", "配置已重置为默认值")
-                
-            except Exception as e:
-                messagebox.showerror("错误", f"重置配置失败: {e}")
-    
     def create_menu(self):
         """创建菜单栏"""
         menubar = tk.Menu(self.root)
@@ -669,6 +488,46 @@ class PKBMImprovedGUI:
             else:
                 cursor.execute('''
                     SELECT title, category, tags, updated_date 
+                    ORDER BY updated_date DESC
+                ''')
+            
+            items = cursor.fetchall()
+            conn.close()
+            
+            # 清空现有项目
+            for item in self.item_tree.get_children():
+                self.item_tree.delete(item)
+            
+            # 添加条目
+            for title, cat, tags, updated in items:
+                # 格式化更新时间
+                if updated:
+                    try:
+                        dt = datetime.fromisoformat(updated)
+                        formatted_date = dt.strftime("%Y-%m-%d %H:%M")
+                    except:
+                        formatted_date = updated
+                else:
+                    formatted_date = "未知"
+                
+                self.item_tree.insert('', 'end', values=(title, cat or "未分类", tags or "", formatted_date))
+                
+        except Exception as e:
+            print(f"加载条目失败: {e}")
+            messagebox.showerror("错误", f"加载条目失败: {e}")
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            if category and category != "全部":
+                cursor.execute('''
+                    SELECT title, category, tags, updated_date 
+                    FROM knowledge_items 
+                    WHERE category = ? 
+                    ORDER BY updated_date DESC
+                ''', (category,))
+            else:
+                cursor.execute('''
+                    SELECT title, category, tags, updated_date 
                     FROM knowledge_items 
                     ORDER BY updated_date DESC
                 ''')
@@ -693,11 +552,9 @@ class PKBMImprovedGUI:
                     formatted_date = "未知"
                 
                 self.item_tree.insert('', 'end', values=(title, cat or "未分类", tags or "", formatted_date))
-            
-            print(f"✅ 成功加载 {len(items)} 个条目")
                 
         except Exception as e:
-            print(f"❌ 加载条目失败: {e}")
+            print(f"加载条目失败: {e}")
             messagebox.showerror("错误", f"加载条目失败: {e}")
     
     def search_items(self, event=None):
@@ -932,7 +789,7 @@ class PKBMImprovedGUI:
                         SET name = ?, description = ?, color = ? 
                         WHERE id = ?
                     ''', (name, description, color, category[0]))
-                else:
+            else:
                     # 创建新分类
                     cursor.execute('''
                         INSERT INTO categories (name, description, color) 
@@ -1228,15 +1085,6 @@ class PKBMImprovedGUI:
         """启动后端服务"""
         def start_service():
             try:
-                # 首先检查服务是否已经在运行
-                try:
-                    response = requests.get(f"{self.api_base}/stats", timeout=3)
-                    if response.status_code == 200:
-                        messagebox.showinfo("信息", "✅ 后端服务已经在运行")
-                        return
-                except:
-                    pass
-                
                 # 尝试启动Go后端服务
                 backend_path = Path("../backend")
                 if backend_path.exists():
@@ -1244,47 +1092,31 @@ class PKBMImprovedGUI:
                     go_files = list(backend_path.glob("*.go"))
                     if go_files:
                         try:
-                            messagebox.showinfo("信息", "🚀 正在启动Go后端服务...")
                             # 尝试启动Go后端
-                            result = subprocess.run(["go", "run", "main.go"], 
+                            subprocess.run(["go", "run", "main.go"], 
                                          cwd=backend_path, 
-                                         capture_output=True,
-                                         text=True,
+                                         check=True, 
                                          timeout=30)
-                            if result.returncode == 0:
-                                messagebox.showinfo("成功", "✅ Go后端服务启动成功")
-                            else:
-                                messagebox.showwarning("警告", f"Go后端启动失败: {result.stderr}")
                         except subprocess.TimeoutExpired:
-                            messagebox.showinfo("信息", "⏱️ Go后端启动超时，可能正在运行")
+                            messagebox.showinfo("信息", "Go后端启动超时，可能正在运行")
                         except FileNotFoundError:
-                            messagebox.showwarning("警告", "❌ 未找到Go环境，请先安装Go")
+                            messagebox.showwarning("警告", "未找到Go环境，请先安装Go")
                         except Exception as e:
                             messagebox.showwarning("警告", f"启动Go后端失败: {e}")
                     else:
-                        messagebox.showinfo("信息", "📁 未找到Go后端代码，请检查backend目录")
+                        messagebox.showinfo("信息", "未找到Go后端代码，请检查backend目录")
                 else:
-                    # 如果没有backend目录，提供更友好的提示
-                    messagebox.showinfo("信息", 
-                        "📋 当前为纯前端模式\n\n"
-                        "如果您需要后端服务，请：\n"
-                        "1. 创建 ../backend 目录\n"
-                        "2. 添加Go后端代码\n"
-                        "3. 或使用其他后端服务\n\n"
-                        "当前可以正常使用本地数据库功能")
-                
-                # 等待一下再检查服务状态
-                time.sleep(2)
+                    messagebox.showinfo("信息", "未找到backend目录，请检查项目结构")
                 
                 # 检查服务状态
                 try:
                     response = requests.get(f"{self.api_base}/stats", timeout=5)
                     if response.status_code == 200:
-                        messagebox.showinfo("信息", "✅ 后端服务连接成功")
+                        messagebox.showinfo("信息", "后端服务正在运行")
                     else:
-                        messagebox.showwarning("警告", "⚠️ 后端服务响应异常")
+                        messagebox.showwarning("警告", "后端服务响应异常")
                 except requests.exceptions.RequestException:
-                    messagebox.showinfo("信息", "ℹ️ 后端服务未启动或无法连接")
+                    messagebox.showinfo("信息", "后端服务未启动或无法连接")
                     
             except Exception as e:
                 messagebox.showerror("错误", f"启动后端服务失败: {e}")
