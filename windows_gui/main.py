@@ -17,6 +17,9 @@ import threading
 import subprocess
 import sys
 import time
+from PIL import Image, ImageTk
+import io
+import base64
 
 # 导入配置管理
 from config_manager import get_config, set_config, save_config
@@ -33,6 +36,7 @@ class PKBMImprovedGUI:
         
         # 确保数据目录存在
         Path("data").mkdir(exist_ok=True)
+        Path("data/attachments").mkdir(exist_ok=True)  # 附件目录
         
         # 设置样式
         self.setup_styles()
@@ -45,6 +49,9 @@ class PKBMImprovedGUI:
         
         # 加载数据
         self.load_data()
+        
+        # 加载设置
+        self.load_settings()
         
     def setup_styles(self):
         """设置界面样式"""
@@ -93,7 +100,13 @@ class PKBMImprovedGUI:
                     created_date TEXT,
                     updated_date TEXT,
                     file_path TEXT,
-                    file_type TEXT
+                    file_type TEXT,
+                    image_path TEXT,
+                    book_author TEXT,
+                    book_isbn TEXT,
+                    book_publisher TEXT,
+                    book_pages INTEGER,
+                    book_rating REAL
                 )
             ''')
             print("✅ knowledge_items表创建/检查完成")
@@ -103,7 +116,8 @@ class PKBMImprovedGUI:
                 CREATE TABLE IF NOT EXISTS categories (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     name TEXT UNIQUE NOT NULL,
-                    description TEXT
+                    description TEXT,
+                    color TEXT DEFAULT "#3498db"
                 )
             ''')
             print("✅ categories表创建/检查完成")
@@ -185,6 +199,32 @@ class PKBMImprovedGUI:
                     print("ℹ️ color列已存在")
                 
                 current_version = 2
+            
+            # 版本3：添加书籍和图片相关字段
+            if current_version < 3:
+                print("🔄 升级到版本3...")
+                
+                # 检查knowledge_items表是否有新字段
+                cursor.execute("PRAGMA table_info(knowledge_items)")
+                columns = [column[1] for column in cursor.fetchall()]
+                
+                new_fields = [
+                    ('image_path', 'TEXT'),
+                    ('book_author', 'TEXT'),
+                    ('book_isbn', 'TEXT'),
+                    ('book_publisher', 'TEXT'),
+                    ('book_pages', 'INTEGER'),
+                    ('book_rating', 'REAL')
+                ]
+                
+                for field_name, field_type in new_fields:
+                    if field_name not in columns:
+                        print(f"📝 添加字段: {field_name}")
+                        cursor.execute(f'ALTER TABLE knowledge_items ADD COLUMN {field_name} {field_type}')
+                    else:
+                        print(f"ℹ️ 字段已存在: {field_name}")
+                
+                current_version = 3
             
             # 更新数据库版本
             cursor.execute('DELETE FROM db_version')
@@ -535,6 +575,9 @@ class PKBMImprovedGUI:
         file_menu.add_command(label="🆕 新建条目", command=self.new_item)
         file_menu.add_command(label="📥 导入文件", command=self.import_file)
         file_menu.add_separator()
+        file_menu.add_command(label="📤 导出条目", command=self.export_item)
+        file_menu.add_command(label="📤 导出所有", command=self.export_all_items)
+        file_menu.add_separator()
         file_menu.add_command(label="🚪 退出", command=self.root.quit)
         
         # 编辑菜单
@@ -554,9 +597,12 @@ class PKBMImprovedGUI:
         tools_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="🔧 工具", menu=tools_menu)
         tools_menu.add_command(label="🚀 启动后端服务", command=self.start_backend)
+        tools_menu.add_command(label="🛑 停止后端服务", command=self.stop_backend)
         tools_menu.add_command(label="🔗 检查连接", command=self.check_connection)
+        tools_menu.add_command(label="📊 后端状态", command=self.show_backend_status)
         tools_menu.add_separator()
         tools_menu.add_command(label="🔄 刷新数据", command=self.refresh_data)
+        tools_menu.add_command(label="🔄 同步数据", command=self.sync_with_backend)
         
         # 视图菜单
         view_menu = tk.Menu(menubar, tearoff=0)
@@ -592,16 +638,33 @@ class PKBMImprovedGUI:
         # 分隔符
         ttk.Separator(toolbar, orient='vertical').pack(side=tk.LEFT, fill=tk.Y, padx=10, pady=5)
         
+        # 导出按钮
+        ttk.Button(toolbar, text="📤 导出条目", command=self.export_item, 
+                  style='Primary.TButton').pack(side=tk.LEFT, padx=(0, 5), pady=10)
+        ttk.Button(toolbar, text="📤 导出所有", command=self.export_all_items).pack(side=tk.LEFT, padx=(0, 5), pady=10)
+        
+        # 分隔符
+        ttk.Separator(toolbar, orient='vertical').pack(side=tk.LEFT, fill=tk.Y, padx=10, pady=5)
+        
         # 系统操作按钮
         ttk.Button(toolbar, text="🚀 启动后端", command=self.start_backend, 
                   style='Primary.TButton').pack(side=tk.LEFT, padx=(0, 5), pady=10)
+        ttk.Button(toolbar, text="🛑 停止后端", command=self.stop_backend, 
+                  style='Warning.TButton').pack(side=tk.LEFT, padx=(0, 5), pady=10)
+        ttk.Button(toolbar, text="🔗 检查连接", command=self.check_connection).pack(side=tk.LEFT, padx=(0, 5), pady=10)
         ttk.Button(toolbar, text="🔄 刷新", command=self.refresh_data).pack(side=tk.LEFT, padx=(0, 5), pady=10)
         ttk.Button(toolbar, text="📊 统计", command=self.show_stats).pack(side=tk.LEFT, padx=(0, 10), pady=10)
     
     def load_data(self):
         """加载数据"""
-        self.load_categories()
-        self.load_items()
+        try:
+            print("🔄 开始加载数据...")
+            self.load_categories()
+            self.load_items()
+            print("✅ 数据加载完成")
+        except Exception as e:
+            print(f"❌ 数据加载失败: {e}")
+            messagebox.showerror("错误", f"数据加载失败: {e}")
     
     def load_categories(self):
         """加载分类数据"""
@@ -962,13 +1025,17 @@ class PKBMImprovedGUI:
         """显示条目编辑对话框"""
         dialog = tk.Toplevel(self.root)
         dialog.title("编辑条目" if item else "新建条目")
-        dialog.geometry("700x600")
+        dialog.geometry("800x700")
         dialog.transient(self.root)
         dialog.grab_set()
         
-        # 创建表单
-        form_frame = ttk.Frame(dialog, padding=20)
-        form_frame.pack(fill=tk.BOTH, expand=True)
+        # 创建主框架
+        main_frame = ttk.Frame(dialog)
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+        
+        # 创建左侧表单框架
+        form_frame = ttk.Frame(main_frame)
+        form_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 10))
         
         # 标题
         ttk.Label(form_frame, text="标题:", font=('Arial', 10, 'bold')).grid(row=0, column=0, sticky=tk.W, pady=10)
@@ -1000,23 +1067,87 @@ class PKBMImprovedGUI:
         tags_entry = ttk.Entry(form_frame, textvariable=tags_var, width=50, font=('Arial', 10))
         tags_entry.grid(row=2, column=1, sticky=(tk.W, tk.E), pady=10, padx=(10, 0))
         
+        # 书籍信息（如果分类是书籍相关）
+        book_frame = ttk.LabelFrame(form_frame, text="📚 书籍信息", padding=10)
+        book_frame.grid(row=3, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=10)
+        
+        # 作者
+        ttk.Label(book_frame, text="作者:").grid(row=0, column=0, sticky=tk.W, pady=5)
+        author_var = tk.StringVar(value=item[10] if item and len(item) > 10 else "")
+        author_entry = ttk.Entry(book_frame, textvariable=author_var, width=30)
+        author_entry.grid(row=0, column=1, sticky=(tk.W, tk.E), pady=5, padx=(10, 0))
+        
+        # ISBN
+        ttk.Label(book_frame, text="ISBN:").grid(row=1, column=0, sticky=tk.W, pady=5)
+        isbn_var = tk.StringVar(value=item[11] if item and len(item) > 11 else "")
+        isbn_entry = ttk.Entry(book_frame, textvariable=isbn_var, width=30)
+        isbn_entry.grid(row=1, column=1, sticky=(tk.W, tk.E), pady=5, padx=(10, 0))
+        
+        # 出版社
+        ttk.Label(book_frame, text="出版社:").grid(row=2, column=0, sticky=tk.W, pady=5)
+        publisher_var = tk.StringVar(value=item[12] if item and len(item) > 12 else "")
+        publisher_entry = ttk.Entry(book_frame, textvariable=publisher_var, width=30)
+        publisher_entry.grid(row=2, column=1, sticky=(tk.W, tk.E), pady=5, padx=(10, 0))
+        
+        # 页数
+        ttk.Label(book_frame, text="页数:").grid(row=3, column=0, sticky=tk.W, pady=5)
+        pages_var = tk.StringVar(value=str(item[13]) if item and len(item) > 13 and item[13] else "")
+        pages_entry = ttk.Entry(book_frame, textvariable=pages_var, width=30)
+        pages_entry.grid(row=3, column=1, sticky=(tk.W, tk.E), pady=5, padx=(10, 0))
+        
+        # 评分
+        ttk.Label(book_frame, text="评分:").grid(row=4, column=0, sticky=tk.W, pady=5)
+        rating_var = tk.StringVar(value=str(item[14]) if item and len(item) > 14 and item[14] else "")
+        rating_entry = ttk.Entry(book_frame, textvariable=rating_var, width=30)
+        rating_entry.grid(row=4, column=1, sticky=(tk.W, tk.E), pady=5, padx=(10, 0))
+        
         # 内容
-        ttk.Label(form_frame, text="内容:", font=('Arial', 10, 'bold')).grid(row=3, column=0, sticky=tk.W, pady=10)
-        content_text = scrolledtext.ScrolledText(form_frame, height=20, width=50, font=('Arial', 10))
-        content_text.grid(row=3, column=1, sticky=(tk.W, tk.E, tk.N, tk.S), pady=10, padx=(10, 0))
+        ttk.Label(form_frame, text="内容:", font=('Arial', 10, 'bold')).grid(row=4, column=0, sticky=tk.W, pady=10)
+        content_text = scrolledtext.ScrolledText(form_frame, height=15, width=50, font=('Arial', 10))
+        content_text.grid(row=4, column=1, sticky=(tk.W, tk.E, tk.N, tk.S), pady=10, padx=(10, 0))
         
         if item:
             content_text.insert(tk.END, item[2] or "")
         
         # 按钮
         button_frame = ttk.Frame(form_frame)
-        button_frame.grid(row=4, column=0, columnspan=2, pady=20)
+        button_frame.grid(row=5, column=0, columnspan=2, pady=20)
+        
+        # 创建右侧图片框架
+        image_frame = ttk.LabelFrame(main_frame, text="🖼️ 图片", padding=10)
+        image_frame.pack(side=tk.RIGHT, fill=tk.BOTH, padx=(10, 0))
+        
+        # 图片显示区域
+        self.image_label = ttk.Label(image_frame, text="暂无图片", width=30, height=15)
+        self.image_label.pack(pady=10)
+        
+        # 图片操作按钮
+        image_buttons_frame = ttk.Frame(image_frame)
+        image_buttons_frame.pack(fill=tk.X, pady=10)
+        
+        ttk.Button(image_buttons_frame, text="📁 选择图片", 
+                  command=lambda: self.select_image(image_var)).pack(fill=tk.X, pady=2)
+        ttk.Button(image_buttons_frame, text="🗑️ 删除图片", 
+                  command=lambda: self.remove_image(image_var)).pack(fill=tk.X, pady=2)
+        
+        # 图片路径变量
+        image_var = tk.StringVar(value=item[9] if item and len(item) > 9 else "")
+        
+        # 如果有图片，显示图片
+        if image_var.get():
+            self.display_image(image_var.get())
         
         def save_item():
             title = title_var.get().strip()
             content = content_text.get("1.0", tk.END).strip()
             category = category_var.get()
             tags = tags_var.get().strip()
+            author = author_var.get().strip()
+            isbn = isbn_var.get().strip()
+            publisher = publisher_var.get().strip()
+            pages = pages_var.get().strip()
+            rating = rating_var.get().strip()
+            image_path = image_var.get()
             
             if not title:
                 messagebox.showwarning("警告", "标题不能为空")
@@ -1028,19 +1159,36 @@ class PKBMImprovedGUI:
                 
                 now = datetime.now().isoformat()
                 
+                # 处理页数和评分
+                try:
+                    pages_int = int(pages) if pages else None
+                except ValueError:
+                    pages_int = None
+                
+                try:
+                    rating_float = float(rating) if rating else None
+                except ValueError:
+                    rating_float = None
+                
                 if item:
                     # 更新现有条目
                     cursor.execute('''
                         UPDATE knowledge_items 
-                        SET title = ?, content = ?, category = ?, tags = ?, updated_date = ?
+                        SET title = ?, content = ?, category = ?, tags = ?, updated_date = ?,
+                            image_path = ?, book_author = ?, book_isbn = ?, book_publisher = ?, 
+                            book_pages = ?, book_rating = ?
                         WHERE id = ?
-                    ''', (title, content, category, tags, now, item[0]))
+                    ''', (title, content, category, tags, now, image_path, author, isbn, 
+                          publisher, pages_int, rating_float, item[0]))
                 else:
                     # 创建新条目
                     cursor.execute('''
-                        INSERT INTO knowledge_items (title, content, category, tags, created_date, updated_date)
-                        VALUES (?, ?, ?, ?, ?, ?)
-                    ''', (title, content, category, tags, now, now))
+                        INSERT INTO knowledge_items (title, content, category, tags, created_date, updated_date,
+                                                   image_path, book_author, book_isbn, book_publisher, 
+                                                   book_pages, book_rating)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ''', (title, content, category, tags, now, now, image_path, author, isbn, 
+                          publisher, pages_int, rating_float))
                 
                 conn.commit()
                 conn.close()
@@ -1058,6 +1206,752 @@ class PKBMImprovedGUI:
         
         # 设置焦点
         title_entry.focus()
+    
+    def select_image(self, image_var):
+        """选择图片文件"""
+        file_path = filedialog.askopenfilename(
+            title="选择图片文件",
+            filetypes=[
+                ("图片文件", "*.jpg *.jpeg *.png *.gif *.bmp *.tiff *.webp"),
+                ("所有文件", "*.*")
+            ]
+        )
+        
+        if file_path:
+            # 复制图片到附件目录
+            try:
+                import shutil
+                filename = os.path.basename(file_path)
+                dest_path = f"data/attachments/{filename}"
+                
+                # 确保附件目录存在
+                Path("data/attachments").mkdir(exist_ok=True)
+                
+                # 复制文件
+                shutil.copy2(file_path, dest_path)
+                
+                # 更新变量和显示
+                image_var.set(dest_path)
+                self.display_image(dest_path)
+                
+                print(f"✅ 图片已保存到: {dest_path}")
+                
+            except Exception as e:
+                messagebox.showerror("错误", f"保存图片失败: {e}")
+    
+    def remove_image(self, image_var):
+        """删除图片"""
+        if messagebox.askyesno("确认删除", "确定要删除当前图片吗？"):
+            image_var.set("")
+            self.image_label.config(text="暂无图片", image="")
+            print("✅ 图片已删除")
+    
+    def display_image(self, image_path):
+        """显示图片"""
+        try:
+            if not image_path or not os.path.exists(image_path):
+                self.image_label.config(text="图片不存在", image="")
+                return
+            
+            # 加载并调整图片大小
+            image = Image.open(image_path)
+            
+            # 计算合适的显示尺寸
+            max_width = 200
+            max_height = 200
+            
+            # 保持宽高比
+            width, height = image.size
+            if width > max_width or height > max_height:
+                ratio = min(max_width / width, max_height / height)
+                new_width = int(width * ratio)
+                new_height = int(height * ratio)
+                image = image.resize((new_width, new_height), Image.Resampling.LANCZOS)
+            
+            # 转换为PhotoImage
+            photo = ImageTk.PhotoImage(image)
+            
+            # 显示图片
+            self.image_label.config(image=photo, text="")
+            self.image_label.image = photo  # 保持引用
+            
+        except Exception as e:
+            print(f"显示图片失败: {e}")
+            self.image_label.config(text="图片加载失败", image="")
+    
+    def export_item(self):
+        """导出选中的条目"""
+        selection = self.item_tree.selection()
+        if not selection:
+            messagebox.showwarning("警告", "请先选择一个条目")
+            return
+        
+        title = self.item_tree.item(selection[0])['values'][0]
+        
+        # 获取条目详细信息
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute('SELECT * FROM knowledge_items WHERE title = ?', (title,))
+            item = cursor.fetchone()
+            conn.close()
+            
+            if not item:
+                messagebox.showerror("错误", "条目不存在")
+                return
+            
+            # 显示导出选项对话框
+            self.show_export_dialog(item)
+            
+        except Exception as e:
+            messagebox.showerror("错误", f"获取条目信息失败: {e}")
+    
+    def export_all_items(self):
+        """导出所有条目"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute('SELECT * FROM knowledge_items ORDER BY title')
+            items = cursor.fetchall()
+            conn.close()
+            
+            if not items:
+                messagebox.showinfo("信息", "没有条目可导出")
+                return
+            
+            # 显示批量导出对话框
+            self.show_batch_export_dialog(items)
+            
+        except Exception as e:
+            messagebox.showerror("错误", f"获取条目列表失败: {e}")
+    
+    def show_export_dialog(self, item):
+        """显示导出选项对话框"""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("📤 导出条目")
+        dialog.geometry("400x300")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        # 创建表单
+        form_frame = ttk.Frame(dialog, padding=20)
+        form_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # 条目标题
+        ttk.Label(form_frame, text=f"导出条目: {item[1]}", font=('Arial', 12, 'bold')).pack(pady=(0, 20))
+        
+        # 导出格式
+        ttk.Label(form_frame, text="导出格式:").pack(anchor=tk.W, pady=5)
+        format_var = tk.StringVar(value="txt")
+        format_frame = ttk.Frame(form_frame)
+        format_frame.pack(fill=tk.X, pady=5)
+        
+        ttk.Radiobutton(format_frame, text="TXT文本", variable=format_var, value="txt").pack(side=tk.LEFT, padx=(0, 20))
+        ttk.Radiobutton(format_frame, text="PDF文档", variable=format_var, value="pdf").pack(side=tk.LEFT)
+        
+        # 导出选项
+        ttk.Label(form_frame, text="导出选项:").pack(anchor=tk.W, pady=(20, 5))
+        include_metadata = tk.BooleanVar(value=True)
+        ttk.Checkbutton(form_frame, text="包含元数据（分类、标签、时间等）", 
+                       variable=include_metadata).pack(anchor=tk.W, pady=2)
+        
+        include_image = tk.BooleanVar(value=True)
+        ttk.Checkbutton(form_frame, text="包含图片信息", 
+                       variable=include_image).pack(anchor=tk.W, pady=2)
+        
+        # 按钮
+        button_frame = ttk.Frame(form_frame)
+        button_frame.pack(pady=30)
+        
+        def export():
+            format_type = format_var.get()
+            include_meta = include_metadata.get()
+            include_img = include_image.get()
+            
+            try:
+                if format_type == "txt":
+                    self.export_to_txt(item, include_meta, include_img)
+                elif format_type == "pdf":
+                    self.export_to_pdf(item, include_meta, include_img)
+                
+                messagebox.showinfo("成功", "导出完成")
+                dialog.destroy()
+                
+            except Exception as e:
+                messagebox.showerror("错误", f"导出失败: {e}")
+        
+        ttk.Button(button_frame, text="📤 导出", command=export, 
+                  style='Success.TButton').pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Button(button_frame, text="❌ 取消", command=dialog.destroy).pack(side=tk.LEFT)
+    
+    def show_batch_export_dialog(self, items):
+        """显示批量导出对话框"""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("📤 批量导出")
+        dialog.geometry("500x400")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        # 创建表单
+        form_frame = ttk.Frame(dialog, padding=20)
+        form_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # 标题
+        ttk.Label(form_frame, text=f"批量导出 {len(items)} 个条目", font=('Arial', 12, 'bold')).pack(pady=(0, 20))
+        
+        # 导出格式
+        ttk.Label(form_frame, text="导出格式:").pack(anchor=tk.W, pady=5)
+        format_var = tk.StringVar(value="txt")
+        format_frame = ttk.Frame(form_frame)
+        format_frame.pack(fill=tk.X, pady=5)
+        
+        ttk.Radiobutton(format_frame, text="TXT文本", variable=format_var, value="txt").pack(side=tk.LEFT, padx=(0, 20))
+        ttk.Radiobutton(format_frame, text="PDF文档", variable=format_var, value="pdf").pack(side=tk.LEFT)
+        
+        # 导出选项
+        ttk.Label(form_frame, text="导出选项:").pack(anchor=tk.W, pady=(20, 5))
+        include_metadata = tk.BooleanVar(value=True)
+        ttk.Checkbutton(form_frame, text="包含元数据", variable=include_metadata).pack(anchor=tk.W, pady=2)
+        
+        separate_files = tk.BooleanVar(value=False)
+        ttk.Checkbutton(form_frame, text="每个条目单独文件", variable=separate_files).pack(anchor=tk.W, pady=2)
+        
+        # 按钮
+        button_frame = ttk.Frame(form_frame)
+        button_frame.pack(pady=30)
+        
+        def export():
+            format_type = format_var.get()
+            include_meta = include_metadata.get()
+            separate = separate_files.get()
+            
+            try:
+                if format_type == "txt":
+                    self.batch_export_to_txt(items, include_meta, separate)
+                elif format_type == "pdf":
+                    self.batch_export_to_pdf(items, include_meta, separate)
+                
+                messagebox.showinfo("成功", "批量导出完成")
+                dialog.destroy()
+                
+            except Exception as e:
+                messagebox.showerror("错误", f"批量导出失败: {e}")
+        
+        ttk.Button(button_frame, text="📤 导出", command=export, 
+                  style='Success.TButton').pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Button(button_frame, text="❌ 取消", command=dialog.destroy).pack(side=tk.LEFT)
+    
+    def export_to_txt(self, item, include_metadata=True, include_image=True):
+        """导出条目为TXT文件"""
+        # 选择保存路径
+        filename = f"{item[1]}.txt"
+        file_path = filedialog.asksaveasfilename(
+            title="保存TXT文件",
+            defaultextension=".txt",
+            initialvalue=filename,
+            filetypes=[("文本文件", "*.txt"), ("所有文件", "*.*")]
+        )
+        
+        if not file_path:
+            return
+        
+        try:
+            with open(file_path, 'w', encoding='utf-8') as f:
+                # 标题
+                f.write(f"标题: {item[1]}\n")
+                f.write("=" * 50 + "\n\n")
+                
+                # 元数据
+                if include_metadata:
+                    f.write("📋 元数据:\n")
+                    f.write(f"分类: {item[3] or '未分类'}\n")
+                    f.write(f"标签: {item[4] or '无'}\n")
+                    f.write(f"创建时间: {item[5] or '未知'}\n")
+                    f.write(f"更新时间: {item[6] or '未知'}\n")
+                    
+                    # 书籍信息
+                    if len(item) > 10 and item[10]:  # 作者
+                        f.write(f"作者: {item[10]}\n")
+                    if len(item) > 11 and item[11]:  # ISBN
+                        f.write(f"ISBN: {item[11]}\n")
+                    if len(item) > 12 and item[12]:  # 出版社
+                        f.write(f"出版社: {item[12]}\n")
+                    if len(item) > 13 and item[13]:  # 页数
+                        f.write(f"页数: {item[13]}\n")
+                    if len(item) > 14 and item[14]:  # 评分
+                        f.write(f"评分: {item[14]}\n")
+                    
+                    f.write("\n")
+                
+                # 图片信息
+                if include_image and len(item) > 9 and item[9]:
+                    f.write(f"🖼️ 图片: {item[9]}\n\n")
+                
+                # 内容
+                f.write("📝 内容:\n")
+                f.write("-" * 30 + "\n")
+                f.write(item[2] or "无内容")
+                f.write("\n")
+            
+            print(f"✅ 条目已导出到: {file_path}")
+            
+        except Exception as e:
+            raise Exception(f"导出TXT失败: {e}")
+    
+    def export_to_pdf(self, item, include_metadata=True, include_image=True):
+        """导出条目为PDF文件"""
+        try:
+            from reportlab.lib.pagesizes import A4
+            from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image as RLImage
+            from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+            from reportlab.lib.units import inch
+            from reportlab.pdfbase import pdfmetrics
+            from reportlab.pdfbase.ttfonts import TTFont
+            
+            # 选择保存路径
+            filename = f"{item[1]}.pdf"
+            file_path = filedialog.asksaveasfilename(
+                title="保存PDF文件",
+                defaultextension=".pdf",
+                initialvalue=filename,
+                filetypes=[("PDF文件", "*.pdf"), ("所有文件", "*.*")]
+            )
+            
+            if not file_path:
+                return
+            
+            # 创建PDF文档
+            doc = SimpleDocTemplate(file_path, pagesize=A4)
+            story = []
+            
+            # 样式
+            styles = getSampleStyleSheet()
+            title_style = ParagraphStyle(
+                'CustomTitle',
+                parent=styles['Heading1'],
+                fontSize=18,
+                spaceAfter=20,
+                alignment=1  # 居中
+            )
+            
+            # 标题
+            story.append(Paragraph(item[1], title_style))
+            story.append(Spacer(1, 20))
+            
+            # 元数据
+            if include_metadata:
+                meta_text = []
+                meta_text.append(f"分类: {item[3] or '未分类'}")
+                meta_text.append(f"标签: {item[4] or '无'}")
+                meta_text.append(f"创建时间: {item[5] or '未知'}")
+                meta_text.append(f"更新时间: {item[6] or '未知'}")
+                
+                # 书籍信息
+                if len(item) > 10 and item[10]:
+                    meta_text.append(f"作者: {item[10]}")
+                if len(item) > 11 and item[11]:
+                    meta_text.append(f"ISBN: {item[11]}")
+                if len(item) > 12 and item[12]:
+                    meta_text.append(f"出版社: {item[12]}")
+                if len(item) > 13 and item[13]:
+                    meta_text.append(f"页数: {item[13]}")
+                if len(item) > 14 and item[14]:
+                    meta_text.append(f"评分: {item[14]}")
+                
+                for meta in meta_text:
+                    story.append(Paragraph(meta, styles['Normal']))
+                    story.append(Spacer(1, 5))
+                
+                story.append(Spacer(1, 20))
+            
+            # 图片
+            if include_image and len(item) > 9 and item[9] and os.path.exists(item[9]):
+                try:
+                    img = RLImage(item[9], width=3*inch, height=2*inch)
+                    story.append(img)
+                    story.append(Spacer(1, 20))
+                except Exception as e:
+                    print(f"PDF图片处理失败: {e}")
+            
+            # 内容
+            story.append(Paragraph("内容:", styles['Heading2']))
+            story.append(Spacer(1, 10))
+            
+            # 处理内容中的换行
+            content = item[2] or "无内容"
+            content_lines = content.split('\n')
+            for line in content_lines:
+                if line.strip():
+                    story.append(Paragraph(line, styles['Normal']))
+                    story.append(Spacer(1, 5))
+            
+            # 生成PDF
+            doc.build(story)
+            print(f"✅ 条目已导出到: {file_path}")
+            
+        except ImportError:
+            messagebox.showwarning("警告", "PDF导出需要安装reportlab库\n请运行: pip install reportlab")
+        except Exception as e:
+            raise Exception(f"导出PDF失败: {e}")
+    
+    def batch_export_to_txt(self, items, include_metadata=True, separate_files=False):
+        """批量导出为TXT文件"""
+        if separate_files:
+            # 每个条目单独文件
+            export_dir = filedialog.askdirectory(title="选择导出目录")
+            if not export_dir:
+                return
+            
+            for item in items:
+                filename = f"{item[1]}.txt"
+                file_path = os.path.join(export_dir, filename)
+                
+                try:
+                    with open(file_path, 'w', encoding='utf-8') as f:
+                        f.write(f"标题: {item[1]}\n")
+                        f.write("=" * 50 + "\n\n")
+                        
+                        if include_metadata:
+                            f.write("📋 元数据:\n")
+                            f.write(f"分类: {item[3] or '未分类'}\n")
+                            f.write(f"标签: {item[4] or '无'}\n")
+                            f.write(f"创建时间: {item[5] or '未知'}\n")
+                            f.write(f"更新时间: {item[6] or '未知'}\n\n")
+                        
+                        f.write("📝 内容:\n")
+                        f.write("-" * 30 + "\n")
+                        f.write(item[2] or "无内容")
+                        f.write("\n")
+                    
+                    print(f"✅ 已导出: {filename}")
+                    
+                except Exception as e:
+                    print(f"❌ 导出失败 {filename}: {e}")
+            
+            messagebox.showinfo("成功", f"已导出 {len(items)} 个文件到: {export_dir}")
+            
+        else:
+            # 合并为一个文件
+            file_path = filedialog.asksaveasfilename(
+                title="保存合并的TXT文件",
+                defaultextension=".txt",
+                initialvalue="所有条目.txt",
+                filetypes=[("文本文件", "*.txt"), ("所有文件", "*.*")]
+            )
+            
+            if not file_path:
+                return
+            
+            try:
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    f.write(f"PKBM 知识库导出\n")
+                    f.write(f"导出时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                    f.write(f"条目总数: {len(items)}\n")
+                    f.write("=" * 60 + "\n\n")
+                    
+                    for i, item in enumerate(items, 1):
+                        f.write(f"{i}. {item[1]}\n")
+                        f.write("-" * 40 + "\n")
+                        
+                        if include_metadata:
+                            f.write(f"分类: {item[3] or '未分类'}\n")
+                            f.write(f"标签: {item[4] or '无'}\n")
+                            f.write(f"创建时间: {item[5] or '未知'}\n")
+                            f.write(f"更新时间: {item[6] or '未知'}\n\n")
+                        
+                        f.write("内容:\n")
+                        f.write(item[2] or "无内容")
+                        f.write("\n\n" + "=" * 60 + "\n\n")
+                
+                print(f"✅ 所有条目已导出到: {file_path}")
+                messagebox.showinfo("成功", f"已导出 {len(items)} 个条目到: {file_path}")
+                
+            except Exception as e:
+                raise Exception(f"批量导出失败: {e}")
+    
+    def batch_export_to_pdf(self, items, include_metadata=True, separate_files=False):
+        """批量导出为PDF文件"""
+        try:
+            from reportlab.lib.pagesizes import A4
+            from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak
+            from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+            from reportlab.lib.units import inch
+            
+            if separate_files:
+                # 每个条目单独文件
+                export_dir = filedialog.askdirectory(title="选择导出目录")
+                if not export_dir:
+                    return
+                
+                for item in items:
+                    filename = f"{item[1]}.pdf"
+                    file_path = os.path.join(export_dir, filename)
+                    
+                    try:
+                        doc = SimpleDocTemplate(file_path, pagesize=A4)
+                        story = []
+                        
+                        # 标题
+                        styles = getSampleStyleSheet()
+                        title_style = ParagraphStyle(
+                            'CustomTitle',
+                            parent=styles['Heading1'],
+                            fontSize=16,
+                            spaceAfter=20,
+                            alignment=1
+                        )
+                        
+                        story.append(Paragraph(item[1], title_style))
+                        story.append(Spacer(1, 20))
+                        
+                        # 元数据
+                        if include_metadata:
+                            meta_text = []
+                            meta_text.append(f"分类: {item[3] or '未分类'}")
+                            meta_text.append(f"标签: {item[4] or '无'}")
+                            meta_text.append(f"创建时间: {item[5] or '未知'}")
+                            meta_text.append(f"更新时间: {item[6] or '未知'}")
+                            
+                            for meta in meta_text:
+                                story.append(Paragraph(meta, styles['Normal']))
+                                story.append(Spacer(1, 5))
+                            
+                            story.append(Spacer(1, 20))
+                        
+                        # 内容
+                        story.append(Paragraph("内容:", styles['Heading2']))
+                        story.append(Spacer(1, 10))
+                        
+                        content = item[2] or "无内容"
+                        content_lines = content.split('\n')
+                        for line in content_lines:
+                            if line.strip():
+                                story.append(Paragraph(line, styles['Normal']))
+                                story.append(Spacer(1, 5))
+                        
+                        doc.build(story)
+                        print(f"✅ 已导出: {filename}")
+                        
+                    except Exception as e:
+                        print(f"❌ 导出失败 {filename}: {e}")
+                
+                messagebox.showinfo("成功", f"已导出 {len(items)} 个PDF文件到: {export_dir}")
+                
+            else:
+                # 合并为一个PDF文件
+                file_path = filedialog.asksaveasfilename(
+                    title="保存合并的PDF文件",
+                    defaultextension=".pdf",
+                    initialvalue="所有条目.pdf",
+                    filetypes=[("PDF文件", "*.pdf"), ("所有文件", "*.*")]
+                )
+                
+                if not file_path:
+                    return
+                
+                doc = SimpleDocTemplate(file_path, pagesize=A4)
+                story = []
+                
+                # 封面
+                styles = getSampleStyleSheet()
+                title_style = ParagraphStyle(
+                    'CustomTitle',
+                    parent=styles['Heading1'],
+                    fontSize=20,
+                    spaceAfter=30,
+                    alignment=1
+                )
+                
+                story.append(Paragraph("PKBM 知识库导出", title_style))
+                story.append(Paragraph(f"导出时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", styles['Normal']))
+                story.append(Paragraph(f"条目总数: {len(items)}", styles['Normal']))
+                story.append(PageBreak())
+                
+                # 目录
+                story.append(Paragraph("目录", styles['Heading1']))
+                story.append(Spacer(1, 20))
+                
+                for i, item in enumerate(items, 1):
+                    story.append(Paragraph(f"{i}. {item[1]}", styles['Normal']))
+                    story.append(Spacer(1, 5))
+                
+                story.append(PageBreak())
+                
+                # 内容
+                for i, item in enumerate(items, 1):
+                    story.append(Paragraph(f"{i}. {item[1]}", styles['Heading2']))
+                    story.append(Spacer(1, 15))
+                    
+                    if include_metadata:
+                        meta_text = []
+                        meta_text.append(f"分类: {item[3] or '未分类'}")
+                        meta_text.append(f"标签: {item[4] or '无'}")
+                        meta_text.append(f"创建时间: {item[5] or '未知'}")
+                        meta_text.append(f"更新时间: {item[6] or '未知'}")
+                        
+                        for meta in meta_text:
+                            story.append(Paragraph(meta, styles['Normal']))
+                            story.append(Spacer(1, 5))
+                        
+                        story.append(Spacer(1, 15))
+                    
+                    story.append(Paragraph("内容:", styles['Heading3']))
+                    story.append(Spacer(1, 10))
+                    
+                    content = item[2] or "无内容"
+                    content_lines = content.split('\n')
+                    for line in content_lines:
+                        if line.strip():
+                            story.append(Paragraph(line, styles['Normal']))
+                            story.append(Spacer(1, 5))
+                    
+                    if i < len(items):  # 不是最后一个条目
+                        story.append(PageBreak())
+                
+                doc.build(story)
+                print(f"✅ 所有条目已导出到: {file_path}")
+                messagebox.showinfo("成功", f"已导出 {len(items)} 个条目到: {file_path}")
+                
+        except ImportError:
+            messagebox.showwarning("警告", "PDF导出需要安装reportlab库\n请运行: pip install reportlab")
+        except Exception as e:
+            raise Exception(f"批量导出PDF失败: {e}")
+    
+    def stop_backend(self):
+        """停止后端服务"""
+        try:
+            # 尝试停止Go后端进程
+            import psutil
+            
+            # 查找Go后端进程
+            for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+                try:
+                    if proc.info['name'] == 'go' or 'main.go' in ' '.join(proc.info['cmdline'] or []):
+                        proc.terminate()
+                        print(f"✅ 已停止后端进程: PID {proc.info['pid']}")
+                        messagebox.showinfo("成功", "后端服务已停止")
+                        return
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    continue
+            
+            messagebox.showinfo("信息", "未找到运行中的后端服务")
+            
+        except ImportError:
+            messagebox.showwarning("警告", "停止后端需要安装psutil库\n请运行: pip install psutil")
+        except Exception as e:
+            messagebox.showerror("错误", f"停止后端失败: {e}")
+    
+    def show_backend_status(self):
+        """显示后端状态信息"""
+        try:
+            # 检查后端连接
+            response = requests.get(f"{self.api_base}/stats", timeout=5)
+            if response.status_code == 200:
+                stats = response.json()
+                
+                # 获取系统信息
+                import psutil
+                cpu_percent = psutil.cpu_percent(interval=1)
+                memory = psutil.virtual_memory()
+                
+                status_text = f"🟢 后端服务运行中\n\n"
+                status_text += f"📊 条目总数: {stats.get('total_items', 0)}\n"
+                status_text += f"📁 分类总数: {stats.get('total_categories', 0)}\n"
+                status_text += f"🔗 API地址: {self.api_base}\n\n"
+                status_text += f"💻 系统状态:\n"
+                status_text += f"  CPU使用率: {cpu_percent}%\n"
+                status_text += f"  内存使用: {memory.percent}%\n"
+                status_text += f"  可用内存: {memory.available // (1024*1024)} MB"
+                
+                messagebox.showinfo("后端状态", status_text)
+            else:
+                messagebox.showwarning("后端状态", "后端服务响应异常")
+                
+        except requests.exceptions.RequestException:
+            messagebox.showerror("后端状态", "无法连接到后端服务")
+        except ImportError:
+            messagebox.showwarning("警告", "系统状态监控需要安装psutil库\n请运行: pip install psutil")
+        except Exception as e:
+            messagebox.showerror("错误", f"获取后端状态失败: {e}")
+    
+    def sync_with_backend(self):
+        """与后端同步数据"""
+        try:
+            # 检查后端连接
+            response = requests.get(f"{self.api_base}/stats", timeout=5)
+            if response.status_code != 200:
+                messagebox.showwarning("警告", "无法连接到后端服务")
+                return
+            
+            # 获取后端数据
+            response = requests.get(f"{self.api_base}/items", timeout=10)
+            if response.status_code == 200:
+                backend_items = response.json()
+                
+                # 获取本地数据
+                conn = sqlite3.connect(self.db_path)
+                cursor = conn.cursor()
+                cursor.execute('SELECT COUNT(*) FROM knowledge_items')
+                local_count = cursor.fetchone()[0]
+                conn.close()
+                
+                # 显示同步信息
+                sync_info = f"🔄 数据同步信息\n\n"
+                sync_info += f"📊 后端条目数: {len(backend_items)}\n"
+                sync_info += f"📊 本地条目数: {local_count}\n\n"
+                
+                if len(backend_items) > local_count:
+                    sync_info += f"📥 建议从后端同步 {len(backend_items) - local_count} 个条目"
+                elif len(backend_items) < local_count:
+                    sync_info += f"📤 建议向后端推送 {local_count - len(backend_items)} 个条目"
+                else:
+                    sync_info += f"✅ 数据已同步"
+                
+                # 询问是否执行同步
+                if messagebox.askyesno("数据同步", f"{sync_info}\n\n是否执行同步操作？"):
+                    self.perform_sync(backend_items)
+                    
+            else:
+                messagebox.showerror("错误", "获取后端数据失败")
+                
+        except requests.exceptions.RequestException:
+            messagebox.showerror("错误", "无法连接到后端服务")
+        except Exception as e:
+            messagebox.showerror("错误", f"同步失败: {e}")
+    
+    def perform_sync(self, backend_items):
+        """执行数据同步"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            synced_count = 0
+            for item in backend_items:
+                # 检查条目是否已存在
+                cursor.execute('SELECT id FROM knowledge_items WHERE title = ?', (item['title'],))
+                existing = cursor.fetchone()
+                
+                if not existing:
+                    # 插入新条目
+                    cursor.execute('''
+                        INSERT INTO knowledge_items (title, content, category, tags, created_date, updated_date, file_path, file_type)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ''', (
+                        item['title'], item['content'], item['category'], item['tags'],
+                        item['created_date'], item['updated_date'], item['file_path'], item['file_type']
+                    ))
+                    synced_count += 1
+            
+            conn.commit()
+            conn.close()
+            
+            messagebox.showinfo("同步完成", f"✅ 成功同步 {synced_count} 个条目")
+            
+            # 刷新界面
+            self.load_items()
+            
+        except Exception as e:
+            messagebox.showerror("错误", f"同步执行失败: {e}")
     
     def import_file(self):
         """导入文件"""
@@ -1354,7 +2248,7 @@ class PKBMImprovedGUI:
     def show_about(self):
         """显示关于信息"""
         messagebox.showinfo("关于", 
-            "PKBM - 个人知识库管理系统 (改进版)\n\n"
+            "PKBM - 个人知识库管理系统 (持续改进版)\n\n"
             "版本: 2.0.0\n"
             "使用tkinter构建，支持跨平台\n"
             "功能特性:\n"
